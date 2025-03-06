@@ -6,13 +6,18 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Define the model path dynamically
-MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'tomato_disease_model.h5')
+# Define the TFLite model path
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'model.tflite')
 
-# Load the Keras model
-model = tf.keras.models.load_model(MODEL_PATH)
+# Load the TFLite model
+interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+interpreter.allocate_tensors()
 
-# Labels and suggestions
+# Get input/output details
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+# Labels and suggestions (no changes needed)
 labels = ["Healthy", "Leaf Mold", "Late Blight", "Early Blight"]
 suggestions = {
     "Healthy": "Your tomato plant is healthy! Keep up the good work.",
@@ -35,15 +40,18 @@ def predict_disease():
     try:
         # Read and preprocess the image
         image = cv2.imdecode(np.frombuffer(file.read(), np.uint8), cv2.IMREAD_COLOR)
-        image = cv2.resize(image, (224, 224)) / 255.0  # Resize and normalize
-        image = np.expand_dims(image, axis=0).astype(np.float32)  # Add batch dimension
+        image = cv2.resize(image, (224, 224))  # Resize to model input size
+        image = image.astype(np.float32) / 255.0  # Normalize to [0, 1]
+        image = np.expand_dims(image, axis=0)  # Add batch dimension
 
-        # Run inference
-        predictions = model.predict(image)
-        
-        # Get prediction
+        # Run inference with TFLite
+        interpreter.set_tensor(input_details[0]['index'], image)
+        interpreter.invoke()
+        predictions = interpreter.get_tensor(output_details[0]['index'])[0]
+
+        # Get results
         predicted_class = np.argmax(predictions)
-        confidence = float(np.max(predictions))
+        confidence = float(predictions[predicted_class])
         prediction = labels[predicted_class]
         suggestion = suggestions[prediction]
 
@@ -56,6 +64,5 @@ def predict_disease():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)  # Use a fixed port for Render
+    app.run(host='0.0.0.0', port=5000)
